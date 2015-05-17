@@ -7,87 +7,102 @@ using System;
 
 namespace TestToolkit
 {
-    public class InvokeModal<T>
+    public interface IClickable
     {
-        AppVar _core;
-        Action<Async> _invoke;
-        Func<WindowControl, Async, T> _create;
+        void EmulateClick();
+    }
 
-        public InvokeModal(AppVar core, Action<Async> invoke, Func<WindowControl, Async, T> create)
+    public interface IClickable<T>
+    {
+        T EmulateClick();
+    }
+
+    public class ClickModal<T> : IClickable<T>
+    {
+        WindowsAppFriend _app;
+        ShowModal _show;
+        CreateWindowDriver _create;
+        public delegate T CreateWindowDriver(WindowControl window, Async async);
+        public delegate void ShowModal(Async async);
+
+        public ClickModal(WindowsAppFriend app, ShowModal show, CreateWindowDriver create)
         {
-            _core = core;
-            _invoke = invoke;
+            _app = app;
+            _show = show;
             _create = create;
         }
 
-        public T Invoke()
+        public T EmulateClick()
         {
-            var current = WindowControl.FromZTop((WindowsAppFriend)_core.App);
+            var current = WindowControl.FromZTop(_app);
             var a = new Async();
-            _invoke(a);
+            _show(a);
             var w = current.WaitForNextModal(a);
             return w == null ? default(T) : _create(w, a);
         }
     }
 
-    public class InvokeModeless<T>
+    public class ClickModeless<T> : IClickable<T>
     {
-        Action _invoke;
-        Func<T> _find;
+        public delegate T CreateWindowDriver();
+        public delegate void ShowModeless();
 
-        public InvokeModeless(Action invoke, Func<T> find)
+        ShowModeless _show;
+        CreateWindowDriver _create;
+
+        public ClickModeless(ShowModeless show, CreateWindowDriver create)
         {
-            _invoke = invoke;
-            _find = find;
+            _show = show;
+            _create = create;
         }
 
-        public T Invoke()
+        public T EmulateClick()
         {
-            _invoke();
-            return _find();
+            _show();
+            return _create();
         }
     }
 
-    public class InvokeSync
+    public class ClickSync : IClickable
     {
-        Action _invoke;
-        Action _sync;
+        public delegate void Finish();
+        public delegate void Sync();
 
-        public InvokeSync(Action invoke, Action sync)
+        Finish _finish;
+        Sync _sync;
+
+        public ClickSync(Finish finish, Sync sync)
         {
-            _invoke = invoke;
+            _finish = finish;
             _sync = sync;
         }
 
-        public void Invoke()
+        public void EmulateClick()
         {
-            _invoke();
+            _finish();
             _sync();
         }
     }
 
-    public class InvokeModalOrSync<T>
+    public class ClickModalOrSync<T> : IClickable<T>
     {
-        AppVar _core;
-        Action<Async> _invoke;
-        Func<WindowControl, Async, T> _create;
-        Action _sync;
-        public InvokeModalOrSync(AppVar core, Action<Async> invoke, Func<WindowControl, Async, T> create, Action sync)
+        WindowsAppFriend _app;
+        ClickModal<T>.ShowModal _show;
+        ClickModal<T>.CreateWindowDriver _create;
+        ClickSync.Sync _sync;
+        public ClickModalOrSync(WindowsAppFriend app, ClickModal<T>.ShowModal show, ClickModal<T>.CreateWindowDriver create, ClickSync.Sync sync)
         {
-            _core = core;
-            _invoke = invoke;
+            _app = app;
+            _show = show;
             _create = create;
             _sync = sync;
         }
 
-        public InvokeModalOrSync(AppVar core, Action<Async> invoke, Func<WindowControl, Async, T> create,Async async) : 
-            this(core, invoke, create, () => async.WaitForCompletion()) { }
-
-        public T Invoke()
+        public T EmulateClick()
         {
-            var current = WindowControl.FromZTop((WindowsAppFriend)_core.App);
+            var current = WindowControl.FromZTop(_app);
             var a = new Async();
-            _invoke(a);
+            _show(a);
             var w = current.WaitForNextModal(a);
             if (w == null)
             {
@@ -98,94 +113,23 @@ namespace TestToolkit
         }
     }
 
-    public class InvokeModelessOrSync<T>
+    public static class Ex
     {
-        Action _invoke;
-        Func<T> _find;
-        Action _sync;
-        public InvokeModelessOrSync(Action invoke, Func<T> find, Action sync)
+        public static IClickable<T> MakeModal<T>(this NativeButton button, Func<WindowControl, Async, T> create)
         {
-            _invoke = invoke;
-            _find = find;
-            _sync = sync;
+            return new ClickModal<T>(button.App, button.EmulateClick, (w, a) => create(w, a));
         }
-
-        public T Invoke()
+        public static IClickable<T> MakeModaleless<T>(this NativeButton button, Func<T> create)
         {
-            _invoke();
-            var w = _find();
-            if (w == null)
-            {
-                _sync();
-            }
-            return w;
+            return new ClickModeless<T>(button.EmulateClick, () => create());
         }
-    }
-
-    public class WPFButtonModal<T> : InvokeModal<T>
-    {
-        public WPFButtonModal(AppVar core, Func<WindowControl, Async, T> create) :
-            base(core, (a) => new WPFButtonBase(core).EmulateClick(a), create) { }
-    }
-
-    public class WPFButtonModeless<T> : InvokeModeless<T>
-    {
-        public WPFButtonModeless(AppVar core, Func<T> find) :
-            base(() => new WPFButtonBase(core).EmulateClick(), find) { }
-    }
-
-    public class WPFButtonSync : InvokeSync
-    {
-        public WPFButtonSync(AppVar core, Action sync) :
-            base(() => new WPFButtonBase(core).EmulateClick(), sync) { }
-
-        public WPFButtonSync(AppVar core, Async async) :
-            this(core, () => async.WaitForCompletion()) { }
-    }
-
-    public class WPFButtonModalOrClose<T> : InvokeModalOrSync<T>
-    {
-        public WPFButtonModalOrClose(AppVar core, Func<WindowControl, Async, T> create, Action sync) :
-            base(core, (a) => new WPFButtonBase(core).EmulateClick(a), create, sync) { }
-
-        public WPFButtonModalOrClose(AppVar core, Func<WindowControl, Async, T> create, Async async) :
-            this(core, create, () => async.WaitForCompletion()) { }
-    }
-
-    public class WPFButtonModelessOrClose<T> : InvokeModelessOrSync<T>
-    {
-        public WPFButtonModelessOrClose(AppVar core, Func<T> find, Action sync) :
-            base(() => new WPFButtonBase(core).EmulateClick(), find, sync) { }
-
-        public WPFButtonModelessOrClose(AppVar core, Func<T> find, Async saync) :
-            this(core, find, () => saync.WaitForCompletion()) { }
-    }
-
-    public class MessageBoxDriver
-    {
-        NativeMessageBox _core;
-
-        public class Button : InvokeSync
+        public static IClickable MakeSync(this NativeButton button, Async async)
         {
-            public Button(NativeMessageBox core, string text, Action sync)
-                : base(() => core.EmulateButtonClick(text), sync) { }
+            return new ClickSync(button.EmulateClick, async.WaitForCompletion);
         }
-
-        public Button Button_OK { get; private set; }
-
-        public Button Button_Cancel { get; private set; }
-
-        public string Message { get { return _core.Message; } }
-
-        public string Title { get { return _core.Title; } }
-
-        public MessageBoxDriver(WindowControl w, Action sync)
+        public static IClickable<T> MakeModalOrSync<T>(this NativeButton button, Func<WindowControl, Async, T> create, Async async)
         {
-            _core = new NativeMessageBox(w);
-            Button_OK = new Button(_core, "OK", sync);
-            Button_Cancel = new Button(_core, "キャンセル", sync);
+            return new ClickModalOrSync<T>(button.App, button.EmulateClick, (w, a) => create(w, a), async.WaitForCompletion);
         }
-
-        public MessageBoxDriver(WindowControl w, Async async) : this(w, () => async.WaitForCompletion()) { }
     }
 }
